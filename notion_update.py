@@ -64,22 +64,47 @@ def fuzzy_map_properties(props):
     return found_map
 
 def get_stock_code_by_name(name):
-    """Search for stock code using Sina suggest API."""
+    """Search for stock code using Sina suggest API with A/H disambiguation."""
     try:
-        url = f"http://suggest3.sinajs.cn/suggest/type=&key={name}"
+        # Determine hints from name
+        is_h_hint = "H" in name.upper()
+        is_a_hint = "A" in name.upper()
+        clean_name = re.sub(r'[AHah]$', '', name).strip() # Remove trailing A/H for search
+
+        url = f"http://suggest3.sinajs.cn/suggest/type=&key={clean_name}"
         response = requests.get(url, timeout=10)
         content = response.content.decode('gbk')
         match = re.search(r'"([^"]+)"', content)
         if match:
             line = match.group(1)
             items = line.split(';')
-            if items:
-                first_item = items[0].split(',')
-                if len(first_item) > 3:
-                    code = first_item[3]
-                    print(f"  [Search] Found code '{code}' for '{name}'")
-                    return code
-    except Exception: pass
+            results = []
+            for item in items:
+                parts = item.split(',')
+                if len(parts) > 3:
+                    results.append(parts[3]) # e.g., 'sh600000', 'hk09988', 'baba'
+
+            if not results: return None
+
+            # 1. If H hint, find first 'hk'
+            if is_h_hint:
+                for r in results:
+                    if r.lower().startswith("hk"): return r
+            
+            # 2. If A hint, find first 'sh' or 'sz'
+            if is_a_hint:
+                for r in results:
+                    if r.lower().startswith(("sh", "sz")): return r
+
+            # 3. No hint: Prefer A-share or HK over others (like US)
+            for r in results:
+                if r.lower().startswith(("sh", "sz", "hk")): return r
+            
+            # 4. Fallback to first result
+            return results[0]
+            
+    except Exception as e:
+        print(f"  [Search] Error for {name}: {e}")
     return None
 
 def get_hkd_cny_rate():
