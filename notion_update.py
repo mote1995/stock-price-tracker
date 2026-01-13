@@ -82,26 +82,29 @@ def get_stock_code_by_name(name):
             for item in items:
                 parts = item.split(',')
                 if len(parts) > 3:
-                    results.append(parts[3]) # e.g., 'sh600000', 'hk09988', 'baba'
+                    # parts[0]: Name, parts[3]: Code
+                    results.append({"name": parts[0], "code": parts[3]})
 
             if not results: return None
 
-            # 1. If H hint, find first 'hk'
-            if is_h_hint:
-                for r in results:
-                    if r.lower().startswith("hk"): return r
-            
-            # 2. If A hint, find first 'sh' or 'sz'
-            if is_a_hint:
-                for r in results:
-                    if r.lower().startswith(("sh", "sz")): return r
-
-            # 3. No hint: Prefer A-share or HK over others (like US)
+            # Filter for meaningful matches
+            filtered = []
             for r in results:
-                if r.lower().startswith(("sh", "sz", "hk")): return r
+                # If H hint, must be hk
+                if is_h_hint and not r["code"].lower().startswith("hk"): continue
+                # If A hint, must be sh/sz
+                if is_a_hint and not r["code"].lower().startswith(("sh", "sz")): continue
+                # Generally prefer sh/sz/hk over US/other
+                if not (is_h_hint or is_a_hint) and not r["code"].lower().startswith(("sh", "sz", "hk")): continue
+                filtered.append(r)
+
+            if not filtered: filtered = results # Fallback to all if hints blocked everything
+
+            # Pick the best match by name similarity or just the first valid one
+            for f in filtered:
+                if clean_name in f["name"]: return f["code"]
             
-            # 4. Fallback to first result
-            return results[0]
+            return filtered[0]["code"]
             
     except Exception as e:
         print(f"  [Search] Error for {name}: {e}")
