@@ -157,71 +157,96 @@ def update_notion_page(page_id, price, props_config, code=None):
     except Exception as e:
         print(f"  [Update] Exception during update: {e}")
 
-def diagnose_access():
-    """Search for all databases the integration can access to help the user find the right ID."""
-    print("\n--- Diagnostic: Searching for accessible databases ---")
+def find_database_by_name(target_name="Investments"):
+    """Search for a database by name if the ID provided is wrong."""
+    print(f"\nSearching for database named '{target_name}'...")
     url = "https://api.notion.com/v1/search"
     payload = {
+        "query": target_name,
         "filter": {"value": "database", "property": "object"},
-        "page_size": 10
+        "page_size": 5
     }
     try:
         response = requests.post(url, json=payload, headers=HEADERS)
         if response.status_code == 200:
             results = response.json().get("results", [])
-            if not results:
-                print("Diagnostic: The integration has NO access to any databases. Please check the 'Connect to' setting in Notion.")
-            else:
-                print(f"Diagnostic: Found {len(results)} accessible databases:")
+            for db in results:
+                title = "Untitled"
+                if db.get("title"):
+                    title = db["title"][0].get("plain_text", "Untitled")
+                if title.lower() == target_name.lower():
+                    print(f"FOUND: Successfully matched '{target_name}' (ID: {db['id']})")
+                    return db['id'], db.get("properties", {})
+            
+            if results:
+                print(f"No exact match for '{target_name}', but found these:")
                 for db in results:
-                    title = "Untitled"
-                    if db.get("title"):
-                        title = db["title"][0].get("plain_text", "Untitled")
-                    print(f"  - Name: '{title}', ID: '{db['id']}'")
-                print("\nAction: Please compare the ID above with your GitHub Secret DATABASE_ID.")
+                    t = db["title"][0].get("plain_text", "Untitled") if db.get("title") else "Untitled"
+                    print(f"  - '{t}' (ID: {db['id']})")
         else:
-            print(f"Diagnostic Failure: HTTP {response.status_code}, {response.text}")
+            print(f"Search failed: {response.status_code}")
     except Exception as e:
-        print(f"Diagnostic Error: {str(e)}")
+        print(f"Search error: {e}")
+    return None, None
 
 def verify_database():
-    print(f"1. Verifying Database Connection (ID: {DATABASE_ID[:4]}...)...")
+    global DATABASE_ID
+    print(f"1. Verifying Database Connection...")
+    
+    # If ID is "AUTO", jump straight to search
+    if DATABASE_ID.upper() == "AUTO":
+        print("DATABASE_ID set to 'AUTO'. Searching...")
+        new_id, props = find_database_by_name("Investments")
+        if new_id:
+            DATABASE_ID = new_id
+            print(f"SUCCESS: Auto-detected database '{new_id}'")
+            return True, props
+        print("ERROR: Could not auto-detect 'Investments' database.")
+        return False, {}
+
+    # Try direct access first
     url = f"https://api.notion.com/v1/databases/{DATABASE_ID}"
     try:
         response = requests.get(url, headers=HEADERS)
-        if response.status_code != 200:
-            print(f"ERROR: Cannot access database. Status: {response.status_code}, Response: {response.text}")
-            # If access fails, try to diagnose why or list what IS accessible
-            diagnose_access()
-            return False, {}
-        
-        data = response.json()
-        print(f"SUCCESS: Connected to database: '{data['title'][0]['plain_text']}'")
-        
-        # Verify columns exist
-        props = data.get("properties", {})
-        print(f"Database Properties found: {list(props.keys())}")
-        
-        missing = []
-        if PROP_NAME not in props: missing.append(PROP_NAME)
-        if PROP_PRICE not in props: missing.append(PROP_PRICE)
-        
-        if missing:
-            print(f"WARNING: Missing properties: {missing}")
-            print(f"Tip: Ensure your columns are named exactly: '{PROP_NAME}' and '{PROP_PRICE}'")
-            # We still return True and props if the database is accessible, but warn about missing columns
-            # The update function will handle if PROP_PRICE is not in props_config
-            # return False, {} # Changed to return True, props to allow partial updates
+        if response.status_code == 200:
+            data = response.json()
+            title = data['title'][0]['plain_text'] if data.get('title') else "Untitled"
+            print(f"SUCCESS: Connected to database: '{title}' (ID: {DATABASE_ID})")
             
-        return True, props
+            # Verify columns exist
+            props = data.get("properties", {})
+            print(f"Database Properties found: {list(props.keys())}")
+            
+            missing = []
+            if PROP_NAME not in props: missing.append(PROP_NAME)
+            if PROP_PRICE not in props: missing.append(PROP_PRICE)
+            
+            if missing:
+                print(f"WARNING: Missing properties: {missing}")
+                print(f"Tip: Ensure your columns are named exactly: '{PROP_NAME}' and '{PROP_PRICE}'")
+            return True, props
+        
+        # If direct access fails (404/400), try to find it by name as a fallback
+        print(f"Direct access to ID '{DATABASE_ID}' failed (Status {response.status_code}). Attempting auto-detection...")
+        new_id, props = find_database_by_name("Investments")
+        if new_id:
+            DATABASE_ID = new_id
+            print(f"SUCCESS: Auto-detected database '{new_id}'")
+            return True, props
+            
+        print(f"ERROR: Cannot access database. Status: {response.status_code}, Response: {response.text}")
+        return False, {}
     except Exception as e:
         print(f"ERROR during connection: {str(e)}")
         return False, {}
 
 def main():
     print("--- Starting Notion Update Script ---")
-    if not NOTION_TOKEN or not DATABASE_ID:
-        print("Error: NOTION_TOKEN or DATABASE_ID is empty after cleaning.")
+    if not NOTION_TOKEN:
+        print("CRITICAL ERROR: NOTION_TOKEN not set in environment!")
+        return
+    if not DATABASE_ID:
+        print("CRITICAL ERROR: DATABASE_ID not set in environment! Set it to 'AUTO' to attempt auto-detection.")
         return
 
     # 1. Verify database connection and properties
