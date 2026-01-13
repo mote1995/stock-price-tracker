@@ -3,15 +3,24 @@ import requests
 import datetime
 import re
 
-# Notion Configuration from Environment Variables (Cleaned)
-NOTION_TOKEN = os.environ.get("NOTION_TOKEN", "").strip()
-DATABASE_ID = os.environ.get("DATABASE_ID", "").strip()
+# Notion Configuration from Environment Variables (Aggressively Cleaned)
+def clean_env_var(name):
+    val = os.environ.get(name, "").strip()
+    # Remove common copy-paste prefixes
+    val = re.sub(rf"^{name}:\s*", "", val, flags=re.IGNORECASE)
+    val = re.sub(rf"^Secret:\s*", "", val, flags=re.IGNORECASE)
+    # Remove any remaining newlines or carriage returns
+    val = re.sub(r"[\r\n]", "", val)
+    return val.strip()
 
-# Property Names in Notion (Matched to your screenshot)
-PROP_NAME = "Investment"    # The Title property in your screenshot
-PROP_PRICE = "Current Price" # The Price property in your screenshot
-PROP_STOCK_CODE = "StockCode" # (Optional) To store the code
-PROP_UPDATE_AT = "UpdateAt"   # (Optional) To store update time
+NOTION_TOKEN = clean_env_var("NOTION_TOKEN")
+DATABASE_ID = clean_env_var("DATABASE_ID")
+
+# Property Names in Notion
+PROP_NAME = "Investment"
+PROP_PRICE = "Current Price"
+PROP_STOCK_CODE = "StockCode"
+PROP_UPDATE_AT = "UpdateAt"
 
 HEADERS = {
     "Authorization": f"Bearer {NOTION_TOKEN}",
