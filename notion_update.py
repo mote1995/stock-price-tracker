@@ -15,7 +15,7 @@ def clean_env_var(name):
     return val.strip()
 
 NOTION_TOKEN = clean_env_var("NOTION_TOKEN")
-DATABASE_ID = clean_env_var("DATABASE_ID")
+DATABASE_ID = clean_env_var("DATABASE_ID").replace("-", "")
 
 # Property Names in Notion
 PROP_NAME = "Investment"
