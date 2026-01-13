@@ -88,9 +88,13 @@ def fetch_notion_stocks():
         
         results = response.json().get("results", [])
         stocks = []
-        for page in results:
+        for i, page in enumerate(results):
             props = page.get("properties", {})
             
+            # Diagnostic: Print property names for the first record to see what's really there
+            if i == 0:
+                print(f"  [Fetch] Sample record property keys: {list(props.keys())}")
+
             # Get Stock Code
             code_prop = props.get(PROP_STOCK_CODE, {})
             code_content = ""
@@ -114,7 +118,8 @@ def fetch_notion_stocks():
             stocks.append({
                 "page_id": page["id"],
                 "code": code_content.strip(),
-                "name": name_content.strip()
+                "name": name_content.strip(),
+                "all_props": list(props.keys()) # For debugging if needed
             })
         return stocks
     except Exception as e:
@@ -189,18 +194,30 @@ def find_database_by_name(target_name="Investments"):
         print(f"Search error: {e}")
     return None, None
 
+def verify_database_properties(props):
+    """Check if required properties exist and print warnings if they don't."""
+    print(f"Database Properties found: {list(props.keys())}")
+    missing = []
+    if PROP_NAME not in props: missing.append(PROP_NAME)
+    if PROP_PRICE not in props: missing.append(PROP_PRICE)
+    
+    if missing:
+        print(f"WARNING: Missing properties: {missing}")
+        print(f"Tip: Your Notion columns MUST be named exactly: '{PROP_NAME}' and '{PROP_PRICE}' (Case sensitive!)")
+    return True, props
+
 def verify_database():
     global DATABASE_ID
     print(f"1. Verifying Database Connection...")
     
     # If ID is "AUTO", jump straight to search
     if DATABASE_ID.upper() == "AUTO":
-        print("DATABASE_ID set to 'AUTO'. Searching...")
+        print("DATABASE_ID set to 'AUTO'. Searching for 'Investments'...")
         new_id, props = find_database_by_name("Investments")
         if new_id:
             DATABASE_ID = new_id
             print(f"SUCCESS: Auto-detected database '{new_id}'")
-            return True, props
+            return verify_database_properties(props)
         print("ERROR: Could not auto-detect 'Investments' database.")
         return False, {}
 
@@ -212,19 +229,7 @@ def verify_database():
             data = response.json()
             title = data['title'][0]['plain_text'] if data.get('title') else "Untitled"
             print(f"SUCCESS: Connected to database: '{title}' (ID: {DATABASE_ID})")
-            
-            # Verify columns exist
-            props = data.get("properties", {})
-            print(f"Database Properties found: {list(props.keys())}")
-            
-            missing = []
-            if PROP_NAME not in props: missing.append(PROP_NAME)
-            if PROP_PRICE not in props: missing.append(PROP_PRICE)
-            
-            if missing:
-                print(f"WARNING: Missing properties: {missing}")
-                print(f"Tip: Ensure your columns are named exactly: '{PROP_NAME}' and '{PROP_PRICE}'")
-            return True, props
+            return verify_database_properties(data.get("properties", {}))
         
         # If direct access fails (404/400), try to find it by name as a fallback
         print(f"Direct access to ID '{DATABASE_ID}' failed (Status {response.status_code}). Attempting auto-detection...")
@@ -232,7 +237,7 @@ def verify_database():
         if new_id:
             DATABASE_ID = new_id
             print(f"SUCCESS: Auto-detected database '{new_id}'")
-            return True, props
+            return verify_database_properties(props)
             
         print(f"ERROR: Cannot access database. Status: {response.status_code}, Response: {response.text}")
         return False, {}
