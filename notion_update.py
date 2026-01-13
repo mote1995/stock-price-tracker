@@ -71,8 +71,6 @@ def get_stock_code_by_name(name):
         uname = name.upper().replace('Ｈ', 'H').replace('Ａ', 'A') 
         is_h_hint = "H" in uname
         is_a_hint = "A" in uname
-        
-        # Remove trailing A/H for search
         clean_name = re.sub(r'[AH]$', '', uname).strip() 
 
         url = f"http://suggest3.sinajs.cn/suggest/type=&key={clean_name}"
@@ -86,42 +84,43 @@ def get_stock_code_by_name(name):
             for item in items:
                 parts = item.split(',')
                 if len(parts) > 3:
-                    results.append({"name": parts[0], "code": parts[3]})
+                    name_raw, code_raw = parts[0], parts[3].lower()
+                    # Normalize codes (Sina sometimes returns missing prefixes)
+                    if len(code_raw) == 5 and code_raw.isdigit():
+                        code_raw = "hk" + code_raw
+                    elif len(code_raw) == 6 and code_raw.isdigit():
+                        if code_raw.startswith('6'): code_raw = "sh" + code_raw
+                        elif code_raw.startswith(('0', '3')): code_raw = "sz" + code_raw
+                    
+                    results.append({"name": name_raw, "code": code_raw})
 
             if not results:
-                print(f"  [Search] No results returned from Sina for '{clean_name}'")
+                print(f"  [Search] No results returned from Sina")
                 return None
-
-            print(f"  [Search] Candidates: {[r['code'] for r in results[:5]]}")
 
             # 1. Primary Filter based on H/A Hints
             candidates = []
             if is_h_hint:
-                candidates = [r for r in results if r["code"].lower().startswith("hk")]
+                candidates = [r for r in results if r["code"].startswith("hk")]
+                print(f"  [Search] H-Hint Mode. HK Candidates: {[c['code'] for c in candidates]}")
             elif is_a_hint:
-                candidates = [r for r in results if r["code"].lower().startswith(("sh", "sz"))]
+                candidates = [r for r in results if r["code"].startswith(("sh", "sz"))]
+                print(f"  [Search] A-Hint Mode. A-Share Candidates: {[c['code'] for c in candidates]}")
             
             if not candidates:
                 # If no hint or hint-filter failed, prefer A/HK over US/Others
-                candidates = [r for r in results if r["code"].lower().startswith(("sh", "sz", "hk"))]
+                candidates = [r for r in results if r["code"].startswith(("sh", "sz", "hk"))]
+                if candidates: print(f"  [Search] Auto-Prefer HK/A: {[c['code'] for c in candidates]}")
             
             # 2. Fallback to all if still empty
             if not candidates: candidates = results
 
             # 3. Match by name similarity or first valid one
             final_code = None
-            # Look for exact name match first
             for c in candidates:
-                if clean_name == c["name"]:
+                if clean_name in c["name"].upper():
                     final_code = c["code"]
                     break
-            
-            # Otherwise look for substring match
-            if not final_code:
-                for c in candidates:
-                    if clean_name in c["name"]:
-                        final_code = c["code"]
-                        break
             
             if not final_code: final_code = candidates[0]["code"]
             
