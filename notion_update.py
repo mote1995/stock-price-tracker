@@ -33,7 +33,8 @@ def fuzzy_map_properties(props):
         "UPDATE": ["UpdateAt", "Updated", "时间", "更新时间", "Last Updated"],
         "BUY_PRICE": ["Buy Price", "买入价", "成本价", "Cost Price"],
         "QUANTITY": ["Quantity", "数量", "持仓量"],
-        "ROI_DETAILS": ["ROI Details", "盈亏详情", "状态", "ROI Detail"]
+        "ROI_DETAILS": ["ROI Details", "盈亏详情", "状态", "ROI Detail"],
+        "EXCHANGE_RATE": ["Exchange Rate", "汇率", "Rate"]
     }
     
     found_map = {}
@@ -46,7 +47,7 @@ def fuzzy_map_properties(props):
             if syn.lower() in actual_keys:
                 real_key = actual_keys[syn.lower()]
                 found_map[key] = real_key
-                print(f"  Matched {key:11} -> '{real_key}'")
+                print(f"  Matched {key:13} -> '{real_key}'")
                 found = True
                 break
         if not found:
@@ -54,7 +55,7 @@ def fuzzy_map_properties(props):
                 for k, v in props.items():
                     if v.get("type") == "title":
                         found_map[key] = k
-                        print(f"  Matched {key:11} -> '{k}' (Title fallback)")
+                        print(f"  Matched {key:13} -> '{k}' (Title fallback)")
                         found = True
                         break
             if not found:
@@ -156,25 +157,30 @@ def fetch_notion_stocks():
         return stocks
     except Exception: return []
 
-def update_notion_page(page_id, price_cny, code=None, raw_price=None, buy_price=0, quantity=0, rate=1.0):
-    """Update Notion page with price and color-coded ROI Details."""
+def update_notion_page(page_id, display_price, code=None, buy_price=0, quantity=0, rate=1.0):
+    """
+    Update Notion page.
+    display_price: Native currency price (HKD for HK stocks, CNY for A-shares)
+    rate: Exchange rate to CNY
+    """
     url = f"https://api.notion.com/v1/pages/{page_id}"
     now = datetime.datetime.now().isoformat()
     update_props = {}
     
-    if "PRICE" in PROP_MAP: update_props[PROP_MAP["PRICE"]] = {"number": price_cny}
+    if "PRICE" in PROP_MAP: update_props[PROP_MAP["PRICE"]] = {"number": display_price}
     if "UPDATE" in PROP_MAP: update_props[PROP_MAP["UPDATE"]] = {"date": {"start": now}}
+    if "EXCHANGE_RATE" in PROP_MAP: update_props[PROP_MAP["EXCHANGE_RATE"]] = {"number": rate}
     if code and "CODE" in PROP_MAP: update_props[PROP_MAP["CODE"]] = {"rich_text": [{"text": {"content": code}}]}
 
     # ROI Details and Color logic
     if "ROI_DETAILS" in PROP_MAP and buy_price > 0:
-        base_price = raw_price if raw_price else price_cny
-        profit_per_share = base_price - buy_price
-        roi_pct = (profit_per_share / buy_price) * 100 if buy_price else 0
-        profit_total_cny = profit_per_share * quantity * rate
+        # Profit calculation: (Native Current - Native Buy) * Quantity * Rate
+        profit_per_share_native = display_price - buy_price
+        roi_pct = (profit_per_share_native / buy_price) * 100
+        profit_total_cny = profit_per_share_native * quantity * rate
         
-        sign = "+" if profit_per_share >= 0 else ""
-        color = "red" if profit_per_share >= 0 else "green"
+        sign = "+" if profit_per_share_native >= 0 else ""
+        color = "red" if profit_per_share_native >= 0 else "green"
         status_text = f"{sign}{roi_pct:.2f}% ({sign}{profit_total_cny:,.2f} CNY)"
         
         update_props[PROP_MAP["ROI_DETAILS"]] = {
@@ -237,18 +243,19 @@ def main():
 
         raw_price = get_stock_price_sina(actual_code)
         if raw_price is not None:
-            price_cny, rate = raw_price, 1.0
+            rate = 1.0
             if actual_code.lower().startswith("hk"):
                 if hkd_rate is None: hkd_rate = get_hkd_cny_rate()
                 rate = hkd_rate
-                price_cny = round(raw_price * rate, 3)
-                print(f"    [Conv] {raw_price} HKD -> {price_cny} CNY")
+                print(f"    [HK-Mode] Price: {raw_price} HKD, Rate: {rate}")
+            else:
+                print(f"    [A-Mode] Price: {raw_price} CNY")
 
-            update_notion_page(entry["page_id"], price_cny, code=(actual_code if not entry["code"] else None),
-                               raw_price=raw_price, buy_price=entry["buy_price"], 
+            update_notion_page(entry["page_id"], raw_price, 
+                               code=(actual_code if not entry["code"] else None),
+                               buy_price=entry["buy_price"], 
                                quantity=entry["quantity"], rate=rate)
             success_count += 1
-            print(f"    [OK] Price: {price_cny}")
 
     print(f"\n--- Finished: {success_count} updated ---")
 
