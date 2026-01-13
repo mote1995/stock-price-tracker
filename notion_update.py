@@ -82,18 +82,56 @@ def get_stock_code_by_name(name):
         print(f"  [Search] Error: {e}")
     return None
 
-def get_stock_price_sina(code):
-    """Fetch stock price from Sina Finance API."""
+def get_hkd_cny_rate():
+    """Fetch real-time HKD to CNY exchange rate from Sina."""
     try:
-        url = f"http://hq.sinajs.cn/list={code.lower()}"
+        url = "http://hq.sinajs.cn/list=fx_shkdcny"
         headers = {'Referer': 'http://finance.sina.com.cn'}
         response = requests.get(url, headers=headers, timeout=10)
         content = response.content.decode('gbk')
-        data = content.split('"')[1].split(',')
-        if len(data) > 3:
-            price = float(data[3])
-            print(f"    [API] Price: {price}")
-            return price
+        # var hq_str_fx_shkdcny="01:05:01,0.9168,0.9168,..."
+        match = re.search(r'"([^"]+)"', content)
+        if match:
+            data = match.group(1).split(',')
+            rate = float(data[1])
+            print(f"  [FX] Current HKD/CNY Rate: {rate}")
+            return rate
+    except Exception as e:
+        print(f"  [FX] Error fetching exchange rate: {e}")
+    return 0.91  # Conservative fallback
+
+def get_stock_price_sina(code):
+    """Fetch stock price from Sina Finance API (Supports A-shares and HK-shares)."""
+    code = code.lower()
+    is_hk = code.startswith("hk")
+    
+    # Use different endpoint for HK stocks
+    if is_hk:
+        url = f"http://hq.sinajs.cn/list=rt_{code}"
+    else:
+        url = f"http://hq.sinajs.cn/list={code}"
+        
+    try:
+        headers = {'Referer': 'http://finance.sina.com.cn'}
+        response = requests.get(url, headers=headers, timeout=10)
+        content = response.content.decode('gbk')
+        
+        match = re.search(r'"([^"]+)"', content)
+        if not match: return None
+        
+        data = match.group(1).split(',')
+        if is_hk:
+            # rt_hk index 6 is current price
+            if len(data) > 6:
+                price = float(data[6])
+                print(f"    [API-HK] {code} Price (HKD): {price}")
+                return price
+        else:
+            # A-share index 3 is current price
+            if len(data) > 3:
+                price = float(data[3])
+                print(f"    [API-A] {code} Price (CNY): {price}")
+                return price
     except Exception as e:
         print(f"    [API] Error for {code}: {e}")
     return None
@@ -228,6 +266,9 @@ def main():
     entries = fetch_notion_stocks()
     print(f"Found {len(entries)} records.")
 
+    # Check if we need exchange rate (lazy fetch)
+    hkd_rate = None
+    
     success_count = 0
     for i, entry in enumerate(entries):
         name, code = entry["name"], entry["code"]
@@ -245,6 +286,15 @@ def main():
         if actual_code:
             price = get_stock_price_sina(actual_code)
             if price is not None:
+                # Currency conversion for HK stocks
+                if actual_code.lower().startswith("hk"):
+                    if hkd_rate is None:
+                        hkd_rate = get_hkd_cny_rate()
+                    
+                    price_cny = round(price * hkd_rate, 3)
+                    print(f"    [Conv] {price} HKD * {hkd_rate} = {price_cny} CNY")
+                    price = price_cny
+
                 if update_notion_page(entry["page_id"], price, code=new_code_to_save):
                     success_count += 1
 
