@@ -7,11 +7,11 @@ import re
 NOTION_TOKEN = os.environ.get("NOTION_TOKEN")
 DATABASE_ID = os.environ.get("DATABASE_ID")
 
-# Property Names in Notion (Customize these if needed)
-PROP_STOCK_CODE = "StockCode"
-PROP_NAME = "Name" # The property containing the stock name (Title or Text)
-PROP_PRICE = "Price"
-PROP_UPDATE_AT = "UpdateAt"
+# Property Names in Notion (Matched to your screenshot)
+PROP_NAME = "Investment"    # The Title property in your screenshot
+PROP_PRICE = "Current Price" # The Price property in your screenshot
+PROP_STOCK_CODE = "StockCode" # (Optional) To store the code
+PROP_UPDATE_AT = "UpdateAt"   # (Optional) To store update time
 
 HEADERS = {
     "Authorization": f"Bearer {NOTION_TOKEN}",
@@ -99,27 +99,35 @@ def fetch_notion_stocks():
         })
     return stocks
 
-def update_notion_page(page_id, price, code=None):
+def update_notion_page(page_id, price, props_config, code=None):
     """
-    Update the price, update time, and optionally the stock code in Notion.
+    Update the price and other properties if they exist in the database.
     """
     url = f"https://api.notion.com/v1/pages/{page_id}"
     now = datetime.datetime.now().isoformat()
     
-    props = {
-        PROP_PRICE: {"number": price},
-        PROP_UPDATE_AT: {"date": {"start": now}}
-    }
+    # Core update: Price
+    update_props = {}
+    if PROP_PRICE in props_config:
+        update_props[PROP_PRICE] = {"number": price}
     
-    # If we found a code that was missing, update it too
-    if code:
-        # Check if PROP_STOCK_CODE is title or rich_text (simplified here to rich_text)
-        # In actual usage, users should match their DB schema.
-        # We'll try to find the type first.
-        props[PROP_STOCK_CODE] = {"rich_text": [{"text": {"content": code}}]}
+    # Optional update: Time
+    if PROP_UPDATE_AT in props_config:
+        update_props[PROP_UPDATE_AT] = {"date": {"start": now}}
     
-    data = {"properties": props}
-    
+    # Optional update: Stock Code (only if it was missing and we found it)
+    if code and (PROP_STOCK_CODE in props_config):
+        prop_type = props_config[PROP_STOCK_CODE].get("type")
+        if prop_type == "rich_text":
+            update_props[PROP_STOCK_CODE] = {"rich_text": [{"text": {"content": code}}]}
+        elif prop_type == "title":
+            update_props[PROP_STOCK_CODE] = {"title": [{"text": {"content": code}}]}
+
+    if not update_props:
+        print(f"Nothing to update for page {page_id}")
+        return
+
+    data = {"properties": update_props}
     response = requests.patch(url, headers=HEADERS, json=data)
     if response.status_code == 200:
         print(f"Updated page {page_id} with price {price}")
@@ -130,6 +138,14 @@ def main():
     if not NOTION_TOKEN or not DATABASE_ID:
         print("Error: NOTION_TOKEN or DATABASE_ID not found in environment variables.")
         return
+
+    # 1. Fetch database schema to see which properties exist
+    db_url = f"https://api.notion.com/v1/databases/{DATABASE_ID}"
+    db_resp = requests.get(db_url, headers=HEADERS)
+    if db_resp.status_code != 200:
+        print(f"Error fetching database info: {db_resp.text}")
+        return
+    props_config = db_resp.json().get("properties", {})
 
     print("Fetching entries from Notion...")
     entries = fetch_notion_stocks()
@@ -157,7 +173,7 @@ def main():
         print(f"Fetching price for {code}...")
         price = get_stock_price_sina(code)
         if price:
-            update_notion_page(entry["page_id"], price, code=new_code_found)
+            update_notion_page(entry["page_id"], price, props_config, code=new_code_found)
         else:
             print(f"Could not get price for {code}")
 
