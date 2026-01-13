@@ -3,9 +3,9 @@ import requests
 import datetime
 import re
 
-# Notion Configuration from Environment Variables
-NOTION_TOKEN = os.environ.get("NOTION_TOKEN")
-DATABASE_ID = os.environ.get("DATABASE_ID")
+# Notion Configuration from Environment Variables (Cleaned)
+NOTION_TOKEN = os.environ.get("NOTION_TOKEN", "").strip()
+DATABASE_ID = os.environ.get("DATABASE_ID", "").strip()
 
 # Property Names in Notion (Matched to your screenshot)
 PROP_NAME = "Investment"    # The Title property in your screenshot
