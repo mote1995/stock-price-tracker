@@ -65,11 +65,13 @@ def fuzzy_map_properties(props):
 
 def get_stock_code_by_name(name):
     """Search for stock code using Sina suggest API with A/H disambiguation."""
+    print(f"  [Search] Looking for: '{name}'")
     try:
         # Determine hints from name
         is_h_hint = "H" in name.upper()
         is_a_hint = "A" in name.upper()
-        clean_name = re.sub(r'[AHah]$', '', name).strip() # Remove trailing A/H for search
+        # Remove trailing A/H for search but keep internal ones
+        clean_name = re.sub(r'[A|H]$', '', name, flags=re.IGNORECASE).strip() 
 
         url = f"http://suggest3.sinajs.cn/suggest/type=&key={clean_name}"
         response = requests.get(url, timeout=10)
@@ -82,10 +84,11 @@ def get_stock_code_by_name(name):
             for item in items:
                 parts = item.split(',')
                 if len(parts) > 3:
-                    # parts[0]: Name, parts[3]: Code
                     results.append({"name": parts[0], "code": parts[3]})
 
-            if not results: return None
+            if not results:
+                print(f"  [Search] No results found for '{clean_name}'")
+                return None
 
             # Filter for meaningful matches
             filtered = []
@@ -98,13 +101,19 @@ def get_stock_code_by_name(name):
                 if not (is_h_hint or is_a_hint) and not r["code"].lower().startswith(("sh", "sz", "hk")): continue
                 filtered.append(r)
 
-            if not filtered: filtered = results # Fallback to all if hints blocked everything
+            if not filtered: filtered = results 
 
-            # Pick the best match by name similarity or just the first valid one
+            # Pick the best match by name similarity
+            final_code = None
             for f in filtered:
-                if clean_name in f["name"]: return f["code"]
+                if clean_name in f["name"]:
+                    final_code = f["code"]
+                    break
             
-            return filtered[0]["code"]
+            if not final_code: final_code = filtered[0]["code"]
+            
+            print(f"  [Search] Result: {final_code}")
+            return final_code
             
     except Exception as e:
         print(f"  [Search] Error for {name}: {e}")
@@ -123,26 +132,42 @@ def get_hkd_cny_rate():
             rate = float(data[1])
             print(f"  [FX] Current HKD/CNY Rate: {rate}")
             return rate
-    except Exception: pass
+    except Exception as e:
+        print(f"  [FX] Error: {e}")
     return 0.915
 
 def get_stock_price_sina(code):
     """Fetch stock price from Sina Finance (Supports A and HK shares)."""
     code = code.lower()
     is_hk = code.startswith("hk")
-    url = f"http://hq.sinajs.cn/list={'rt_' if is_hk else ''}{code}"
+    # Native HK quotes often don't need rt_ prefix
+    url = f"http://hq.sinajs.cn/list={code}"
+    
     try:
         headers = {'Referer': 'http://finance.sina.com.cn'}
         response = requests.get(url, headers=headers, timeout=10)
         content = response.content.decode('gbk')
         match = re.search(r'"([^"]+)"', content)
-        if not match: return None
+        if not match:
+            print(f"    [API] No data found for code {code}")
+            return None
+            
         data = match.group(1).split(',')
-        if is_hk and len(data) > 6:
-            return float(data[6])
-        elif not is_hk and len(data) > 3:
-            return float(data[3])
-    except Exception: pass
+        if len(data) < 4:
+            print(f"    [API] Invalid response for {code}: {match.group(1)}")
+            return None
+
+        if is_hk:
+            # For HK, index 6 is the current price
+            if len(data) > 6:
+                price = float(data[6])
+                return price
+        else:
+            # For A-share, index 3 is current price
+            price = float(data[3])
+            return price
+    except Exception as e:
+        print(f"    [API] Error for {code}: {e}")
     return None
 
 def fetch_notion_stocks():
