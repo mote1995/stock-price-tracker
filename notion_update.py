@@ -67,11 +67,13 @@ def get_stock_code_by_name(name):
     """Search for stock code using Sina suggest API with A/H disambiguation."""
     print(f"  [Search] Looking for: '{name}'")
     try:
-        # Determine hints from name
-        is_h_hint = "H" in name.upper()
-        is_a_hint = "A" in name.upper()
-        # Remove trailing A/H for search but keep internal ones
-        clean_name = re.sub(r'[A|H]$', '', name, flags=re.IGNORECASE).strip() 
+        # Normalize and determine hints
+        uname = name.upper().replace('Ｈ', 'H').replace('Ａ', 'A') 
+        is_h_hint = "H" in uname
+        is_a_hint = "A" in uname
+        
+        # Remove trailing A/H for search
+        clean_name = re.sub(r'[AH]$', '', uname).strip() 
 
         url = f"http://suggest3.sinajs.cn/suggest/type=&key={clean_name}"
         response = requests.get(url, timeout=10)
@@ -87,36 +89,47 @@ def get_stock_code_by_name(name):
                     results.append({"name": parts[0], "code": parts[3]})
 
             if not results:
-                print(f"  [Search] No results found for '{clean_name}'")
+                print(f"  [Search] No results returned from Sina for '{clean_name}'")
                 return None
 
-            # Filter for meaningful matches
-            filtered = []
-            for r in results:
-                # If H hint, must be hk
-                if is_h_hint and not r["code"].lower().startswith("hk"): continue
-                # If A hint, must be sh/sz
-                if is_a_hint and not r["code"].lower().startswith(("sh", "sz")): continue
-                # Generally prefer sh/sz/hk over US/other
-                if not (is_h_hint or is_a_hint) and not r["code"].lower().startswith(("sh", "sz", "hk")): continue
-                filtered.append(r)
+            print(f"  [Search] Candidates: {[r['code'] for r in results[:5]]}")
 
-            if not filtered: filtered = results 
+            # 1. Primary Filter based on H/A Hints
+            candidates = []
+            if is_h_hint:
+                candidates = [r for r in results if r["code"].lower().startswith("hk")]
+            elif is_a_hint:
+                candidates = [r for r in results if r["code"].lower().startswith(("sh", "sz"))]
+            
+            if not candidates:
+                # If no hint or hint-filter failed, prefer A/HK over US/Others
+                candidates = [r for r in results if r["code"].lower().startswith(("sh", "sz", "hk"))]
+            
+            # 2. Fallback to all if still empty
+            if not candidates: candidates = results
 
-            # Pick the best match by name similarity
+            # 3. Match by name similarity or first valid one
             final_code = None
-            for f in filtered:
-                if clean_name in f["name"]:
-                    final_code = f["code"]
+            # Look for exact name match first
+            for c in candidates:
+                if clean_name == c["name"]:
+                    final_code = c["code"]
                     break
             
-            if not final_code: final_code = filtered[0]["code"]
+            # Otherwise look for substring match
+            if not final_code:
+                for c in candidates:
+                    if clean_name in c["name"]:
+                        final_code = c["code"]
+                        break
             
-            print(f"  [Search] Result: {final_code}")
+            if not final_code: final_code = candidates[0]["code"]
+            
+            print(f"  [Search] Final Selected: {final_code}")
             return final_code
             
     except Exception as e:
-        print(f"  [Search] Error for {name}: {e}")
+        print(f"  [Search] Error: {e}")
     return None
 
 def get_hkd_cny_rate():
@@ -140,7 +153,6 @@ def get_stock_price_sina(code):
     """Fetch stock price from Sina Finance (Supports A and HK shares)."""
     code = code.lower()
     is_hk = code.startswith("hk")
-    # Native HK quotes often don't need rt_ prefix
     url = f"http://hq.sinajs.cn/list={code}"
     
     try:
@@ -153,19 +165,18 @@ def get_stock_price_sina(code):
             return None
             
         data = match.group(1).split(',')
-        if len(data) < 4:
-            print(f"    [API] Invalid response for {code}: {match.group(1)}")
-            return None
-
+        # A-share has >3 fields, HK has >6
         if is_hk:
-            # For HK, index 6 is the current price
             if len(data) > 6:
                 price = float(data[6])
+                print(f"    [API-HK] {code} -> {price}")
                 return price
-        else:
-            # For A-share, index 3 is current price
+        elif len(data) > 3:
             price = float(data[3])
+            print(f"    [API-A] {code} -> {price}")
             return price
+            
+        print(f"    [API] Invalid data format for {code}")
     except Exception as e:
         print(f"    [API] Error for {code}: {e}")
     return None
