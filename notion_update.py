@@ -157,33 +157,77 @@ def update_notion_page(page_id, price, props_config, code=None):
     except Exception as e:
         print(f"  [Update] Exception during update: {e}")
 
+def diagnose_access():
+    """Search for all databases the integration can access to help the user find the right ID."""
+    print("\n--- Diagnostic: Searching for accessible databases ---")
+    url = "https://api.notion.com/v1/search"
+    payload = {
+        "filter": {"value": "database", "property": "object"},
+        "page_size": 10
+    }
+    try:
+        response = requests.post(url, json=payload, headers=HEADERS)
+        if response.status_code == 200:
+            results = response.json().get("results", [])
+            if not results:
+                print("Diagnostic: The integration has NO access to any databases. Please check the 'Connect to' setting in Notion.")
+            else:
+                print(f"Diagnostic: Found {len(results)} accessible databases:")
+                for db in results:
+                    title = "Untitled"
+                    if db.get("title"):
+                        title = db["title"][0].get("plain_text", "Untitled")
+                    print(f"  - Name: '{title}', ID: '{db['id']}'")
+                print("\nAction: Please compare the ID above with your GitHub Secret DATABASE_ID.")
+        else:
+            print(f"Diagnostic Failure: HTTP {response.status_code}, {response.text}")
+    except Exception as e:
+        print(f"Diagnostic Error: {str(e)}")
+
+def verify_database():
+    print(f"1. Verifying Database Connection (ID: {DATABASE_ID[:4]}...)...")
+    url = f"https://api.notion.com/v1/databases/{DATABASE_ID}"
+    try:
+        response = requests.get(url, headers=HEADERS)
+        if response.status_code != 200:
+            print(f"ERROR: Cannot access database. Status: {response.status_code}, Response: {response.text}")
+            # If access fails, try to diagnose why or list what IS accessible
+            diagnose_access()
+            return False, {}
+        
+        data = response.json()
+        print(f"SUCCESS: Connected to database: '{data['title'][0]['plain_text']}'")
+        
+        # Verify columns exist
+        props = data.get("properties", {})
+        print(f"Database Properties found: {list(props.keys())}")
+        
+        missing = []
+        if PROP_NAME not in props: missing.append(PROP_NAME)
+        if PROP_PRICE not in props: missing.append(PROP_PRICE)
+        
+        if missing:
+            print(f"WARNING: Missing properties: {missing}")
+            print(f"Tip: Ensure your columns are named exactly: '{PROP_NAME}' and '{PROP_PRICE}'")
+            # We still return True and props if the database is accessible, but warn about missing columns
+            # The update function will handle if PROP_PRICE is not in props_config
+            # return False, {} # Changed to return True, props to allow partial updates
+            
+        return True, props
+    except Exception as e:
+        print(f"ERROR during connection: {str(e)}")
+        return False, {}
+
 def main():
     print("--- Starting Notion Update Script ---")
     if not NOTION_TOKEN or not DATABASE_ID:
         print("Error: NOTION_TOKEN or DATABASE_ID is empty after cleaning.")
         return
 
-    # 1. Fetch database schema
-    print(f"1. Verifying Database Connection (ID: {DATABASE_ID[:5]}...)...")
-    db_url = f"https://api.notion.com/v1/databases/{DATABASE_ID}"
-    try:
-        db_resp = requests.get(db_url, headers=HEADERS, timeout=10)
-        if db_resp.status_code != 200:
-            print(f"ERROR: Cannot access database. Status: {db_resp.status_code}, Response: {db_resp.text}")
-            return
-        
-        db_data = db_resp.json()
-        props_config = db_data.get("properties", {})
-        print(f"SUCCESS: Connected to database '{db_data.get('title', [{}])[0].get('plain_text', 'Untitled')}'")
-        print(f"Properties found: {', '.join(props_config.keys())}")
-        
-        if PROP_NAME not in props_config:
-            print(f"WARNING: Column '{PROP_NAME}' not found. Please check column names!")
-        if PROP_PRICE not in props_config:
-            print(f"WARNING: Column '{PROP_PRICE}' not found. No prices will be updated.")
-
-    except Exception as e:
-        print(f"ERROR: Exception while verifying database: {e}")
+    # 1. Verify database connection and properties
+    db_ok, props_config = verify_database()
+    if not db_ok:
+        print("Exiting due to database verification failure.")
         return
 
     # 2. Fetch entries
