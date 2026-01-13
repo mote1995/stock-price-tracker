@@ -1,0 +1,30 @@
+name: Update Notion Stock Prices
+
+on:
+  schedule:
+    # Runs at 09:30, 10:30, 11:30, 13:30, 14:30, 15:30 (CST)
+    # cron is in UTC. CST = UTC + 8.
+    - cron: '30 1,2,3,5,6,7 * * 1-5'
+  workflow_dispatch: # Allow manual trigger
+
+jobs:
+  update-prices:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python_version: '3.10'
+
+      - name: Install dependencies
+        run: |
+          pip install requests
+
+      - name: Run update script
+        env:
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+          DATABASE_ID: ${{ secrets.DATABASE_ID }}
+        run: python notion_update.py
